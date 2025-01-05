@@ -1,0 +1,21 @@
+# R specific
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+
+# Package specific
+.tokens
+*.sqlite
+
+# System specific
+.DS_Store
+.env
+
+# Build artifacts
+*.o
+*.so
+*.dll
+inst/doc
+/doc/
+/Meta/ 

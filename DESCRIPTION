@@ -1,0 +1,26 @@
+Package: tradestationr
+Title: High Performance R Interface to TradeStation API
+Version: 0.1.0
+Authors@R: 
+    person("Your", "Name", , "your.email@example.com", role = c("aut", "cre"))
+Description: A high-performance R interface to the TradeStation API focusing on 
+    authentication, historical data retrieval, and streaming market data for stocks 
+    and options. Optimized for speed using data.table and SQLite for data handling.
+License: MIT + file LICENSE
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.2.3
+Imports:
+    data.table (>= 1.14.8),
+    httr2 (>= 0.2.3),
+    RSQLite (>= 2.3.1),
+    jsonlite (>= 1.8.4),
+    R6 (>= 2.5.1),
+    checkmate (>= 2.2.0),
+    logger (>= 0.2.2)
+Suggests:
+    testthat (>= 3.1.10),
+    covr (>= 3.6.2),
+    knitr (>= 1.42),
+    rmarkdown (>= 2.21)
+Config/testthat/edition: 3 
