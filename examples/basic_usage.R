@@ -1,66 +1,74 @@
-library(tradestationr)
+library(tradestationr)  # When installed via remotes::install_github
+# For development, use:
+library(R6)
+library(checkmate)
+library(httr2)
+library(logger)
 library(data.table)
+library(jsonlite)
 
-# Initialize client with environment variables
-ts <- TradeStation$new(
-  client_id = Sys.getenv("TS_CLIENT_ID"),
-  client_secret = Sys.getenv("TS_CLIENT_SECRET"),
-  token_path = ".tokens"
-)
+source("R/auth.R")
+source("R/market_data.R")
+source("R/tradestation.R")
+
+# Initialize client with path to .secrets directory
+ts <- TradeStation$new(secrets_dir = ".secrets")
 
 # Authenticate (will use cached tokens if available)
 ts$authenticate()
 
-# Get market data handler
-md <- ts$market_data()
+# Check authentication status
+if (!ts$is_authenticated()) {
+  stop("Authentication failed")
+}
 
-# Example 1: Get static historical data for AAPL
-cat("\nFetching historical data for AAPL...\n")
-aapl_hist <- md$get_bars(
+# Get historical bar data
+bars <- ts$market_data()$get_bars(
   symbol = "AAPL",
-  interval = "5min",
+  interval = "1min",
   start_date = Sys.Date() - 1,
   end_date = Sys.Date()
 )
-print(aapl_hist)
 
-# Example 2: Get option chain data
-cat("\nFetching AAPL option expirations...\n")
-aapl_expirations <- md$get_option_expirations("AAPL")
-print(aapl_expirations)
+# Display first few bars
+cat("\nHistorical bars for AAPL:\n")
+print(head(bars), topn = 6)
 
-if (nrow(aapl_expirations) > 0) {
-  # Get strikes for first expiration
-  cat("\nFetching option strikes for first expiration...\n")
-  first_expiry <- aapl_expirations$Expiration[1]
-  strikes <- md$get_option_strikes("AAPL", first_expiry)
-  print(strikes)
-}
+# Get symbol details
+details <- ts$market_data()$get_symbol_details("AAPL")
+cat("\nSymbol details for AAPL:\n")
+print(details, nrows = 1)
 
-# Example 3: Stream real-time quotes
-cat("\nStarting quote stream for AAPL...\n")
-cat("Press Esc to stop streaming\n")
+# Example of streaming quotes (runs until interrupted)
+cat("\nStreaming real-time quotes for AAPL (press Ctrl+C to stop):\n")
+cat("♥ = heartbeat, $ = quote\n\n")
 
-# Create in-memory quote storage
-quotes <- data.table()
+# Keep track of quotes received
+quote_count <- 0
+start_time <- Sys.time()
 
-md$stream_quotes("AAPL", function(quote) {
-  # Add timestamp
-  quote[, timestamp := Sys.time()]
-  
-  # Append to in-memory storage
-  quotes <- rbindlist(list(quotes, quote), fill = TRUE)
-  
-  # Print latest quote
-  cat(sprintf("\rLast: %s @ %s", 
-              quote$Last, 
-              format(quote$timestamp, "%H:%M:%S")))
-})
+# Create a data.table to store quotes
+quotes <- data.table::data.table()
 
-# After stopping stream, show summary
-cat("\n\nQuote summary:\n")
-print(quotes[, .(
-  min_price = min(Last),
-  max_price = max(Last),
-  n_quotes = .N
-), by = Symbol]) 
+tryCatch({
+  ts$market_data()$stream_quotes(
+    symbols = "AAPL",
+    callback = function(quote) {
+      quote_count <<- quote_count + 1
+      
+      # Print a summary of the quote
+      cat(sprintf("\rQuotes: %d | Last: %s | Bid: %s | Ask: %s | Volume: %s | Time: %s",
+                  quote_count,
+                  quote$Last,
+                  quote$Bid,
+                  quote$Ask,
+                  quote$Volume,
+                  format(as.POSIXct(quote$TradeTime), "%H:%M:%S")))
+      flush.console()
+    }
+  )
+}, error = function(e) {
+  cat(sprintf("\nStreaming stopped: %s\n", e$message))
+}, finally = {
+  cat(sprintf("\nTotal quotes received: %d\n", quote_count))
+}) 

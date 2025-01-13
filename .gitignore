@@ -7,6 +7,7 @@
 # Package specific
 .tokens
 *.sqlite
+.secrets/
 
 # System specific
 .DS_Store

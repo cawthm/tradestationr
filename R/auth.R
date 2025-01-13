@@ -1,64 +1,30 @@
 #' @title Authentication Handler
 #' @description Manages OAuth2 authentication and token lifecycle
 #' @importFrom httr2 oauth_client oauth_flow_auth_code oauth_flow_refresh oauth_token_cached
-#' @importFrom jsonlite write_json read_json
 #' @importFrom logger log_info log_error
-#' @importFrom checkmate assert_string assert_path_for_output
+#' @importFrom checkmate assert_string assert_path_for_output assert_directory_exists
 
 #' @export
 TokenManager <- R6::R6Class(
   "TokenManager",
   
-  private = list(
-    .client = NULL,
-    .token_path = NULL,
-    .token = NULL,
-    
-    # Save tokens to disk
-    .save_tokens = function() {
-      if (!is.null(private$.token)) {
-        tryCatch({
-          write_json(private$.token, private$.token_path, auto_unbox = TRUE)
-          log_info("Tokens saved to disk")
-        }, error = function(e) {
-          log_error(sprintf("Failed to save tokens: %s", e$message))
-        })
-      }
-    },
-    
-    # Load tokens from disk
-    .load_tokens = function() {
-      if (file.exists(private$.token_path)) {
-        tryCatch({
-          private$.token <- read_json(private$.token_path)
-          log_info("Tokens loaded from disk")
-          TRUE
-        }, error = function(e) {
-          log_error(sprintf("Failed to load tokens: %s", e$message))
-          FALSE
-        })
-      } else {
-        FALSE
-      }
-    }
-  ),
-  
   public = list(
     #' @description Initialize token manager
-    #' @param client_id TradeStation API client ID
-    #' @param client_secret TradeStation API client secret
-    #' @param token_path Path to save/load tokens (default: .tokens)
-    initialize = function(client_id, client_secret, token_path = ".tokens") {
-      assert_string(client_id, min.chars = 1)
-      assert_string(client_secret, min.chars = 1)
-      assert_path_for_output(token_path)
+    #' @param secrets_dir Path to .secrets directory
+    initialize = function(secrets_dir = ".secrets") {
+      assert_directory_exists(secrets_dir)
       
-      private$.token_path <- token_path
+      private$.secrets_dir <- secrets_dir
+      private$.client_creds_path <- file.path(secrets_dir, ".client_creds.rds")
+      private$.refresh_token_path <- file.path(secrets_dir, ".refresh_token.rds")
+      private$.access_token_path <- file.path(secrets_dir, ".ts_tokens.rds")
+      
+      # Load credentials and initialize client
+      creds <- private$.load_credentials()
       private$.client <- oauth_client(
-        id = client_id,
-        secret = client_secret,
+        id = creds$client_id,
+        secret = creds$client_secret,
         token_url = "https://signin.tradestation.com/oauth/token",
-        auth_url = "https://signin.tradestation.com/authorize",
         name = "tradestationr"
       )
       
@@ -95,24 +61,31 @@ TokenManager <- R6::R6Class(
         scope = c("openid", "offline_access", "MarketData", "ReadAccount", "Trade")
       )
       
-      private$.save_tokens()
+      # Save both tokens
+      private$.save_access_token()
+      private$.save_refresh_token()
+      
       invisible(self)
     },
     
     #' @description Refresh access token using refresh token
+    #' @param refresh_token Optional refresh token to use (otherwise uses stored token)
     #' @return logical indicating if refresh was successful
-    refresh_token = function() {
-      if (!self$has_tokens()) {
-        log_error("No tokens available to refresh")
-        return(FALSE)
+    refresh_token = function(refresh_token = NULL) {
+      if (is.null(refresh_token)) {
+        if (!file.exists(private$.refresh_token_path)) {
+          log_error("No refresh token available")
+          return(FALSE)
+        }
+        refresh_token <- readRDS(private$.refresh_token_path)
       }
       
       tryCatch({
         private$.token <- oauth_flow_refresh(
           client = private$.client,
-          refresh_token = private$.token$refresh_token
+          refresh_token = refresh_token
         )
-        private$.save_tokens()
+        private$.save_access_token()  # Only update access token
         log_info("Access token refreshed successfully")
         TRUE
       }, error = function(e) {
@@ -121,14 +94,90 @@ TokenManager <- R6::R6Class(
       })
     },
     
+    #' @description Force update of access token
+    #' @return logical indicating if update was successful
+    update_access_token = function() {
+      self$refresh_token()
+    },
+    
     #' @description Clear all stored tokens
     clear_tokens = function() {
       private$.token <- NULL
-      if (file.exists(private$.token_path)) {
-        unlink(private$.token_path)
+      if (file.exists(private$.access_token_path)) {
+        unlink(private$.access_token_path)
+      }
+      if (file.exists(private$.refresh_token_path)) {
+        unlink(private$.refresh_token_path)
       }
       log_info("Tokens cleared")
       invisible(self)
+    }
+  ),
+  
+  private = list(
+    .client = NULL,
+    .secrets_dir = NULL,
+    .client_creds_path = NULL,
+    .refresh_token_path = NULL,
+    .access_token_path = NULL,
+    .token = NULL,
+    
+    # Load credentials from .secrets
+    .load_credentials = function() {
+      if (!file.exists(private$.client_creds_path)) {
+        stop("Client credentials not found at: ", private$.client_creds_path)
+      }
+      
+      creds <- readRDS(private$.client_creds_path)
+      if (is.null(creds$client_id) || is.null(creds$client_secret)) {
+        stop("Invalid credentials format in .client_creds.rds")
+      }
+      
+      creds
+    },
+    
+    # Save access token to disk
+    .save_access_token = function() {
+      if (!is.null(private$.token)) {
+        tryCatch({
+          saveRDS(private$.token, private$.access_token_path)
+          log_info("Access token saved")
+        }, error = function(e) {
+          log_error(sprintf("Failed to save access token: %s", e$message))
+        })
+      }
+    },
+    
+    # Save refresh token to disk
+    .save_refresh_token = function() {
+      if (!is.null(private$.token$refresh_token)) {
+        tryCatch({
+          saveRDS(private$.token$refresh_token, private$.refresh_token_path)
+          log_info("Refresh token saved")
+        }, error = function(e) {
+          log_error(sprintf("Failed to save refresh token: %s", e$message))
+        })
+      }
+    },
+    
+    # Load tokens from disk
+    .load_tokens = function() {
+      # Try to load refresh token first
+      if (file.exists(private$.refresh_token_path)) {
+        refresh_token <- readRDS(private$.refresh_token_path)
+        if (!is.null(refresh_token)) {
+          # Use refresh token to get new access token
+          return(self$refresh_token(refresh_token))
+        }
+      }
+      
+      # Fall back to access token if available
+      if (file.exists(private$.access_token_path)) {
+        private$.token <- readRDS(private$.access_token_path)
+        return(!is.null(private$.token))
+      }
+      
+      FALSE
     }
   )
 ) 
