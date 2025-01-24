@@ -1,0 +1,5 @@
+id,timestamp,symbol,event,latency_ms,request_id,stage,msg_size,exchange_time,broker_time,our_time
+1,2025-01-21 14:34:35,SYSTEM,authentication,17.789952,AUTH001,complete,,,,
+2,2025-01-21 14:34:50,SYSTEM,authentication,24.0832,AUTH001,complete,,,,
+3,2025-01-21 14:37:21,SYSTEM,authentication,20.52992,AUTH001,complete,,,,
+4,2025-01-21 14:44:21,SYSTEM,authentication,24.032,AUTH001,complete,,,,

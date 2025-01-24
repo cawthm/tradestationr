@@ -19,6 +19,10 @@ TokenManager <- R6::R6Class(
       private$.refresh_token_path <- file.path(secrets_dir, ".refresh_token.rds")
       private$.access_token_path <- file.path(secrets_dir, ".ts_tokens.rds")
       
+      # Initialize refresh cooldown tracking
+      private$.last_refresh_time <- 0
+      private$.refresh_cooldown <- 60  # Minimum seconds between refresh attempts
+      
       # Load credentials and initialize client
       creds <- private$.load_credentials()
       private$.client <- oauth_client(
@@ -64,14 +68,26 @@ TokenManager <- R6::R6Class(
       # Save both tokens
       private$.save_access_token()
       private$.save_refresh_token()
+      private$.last_refresh_time <- as.numeric(Sys.time())
       
       invisible(self)
     },
     
     #' @description Refresh access token using refresh token
     #' @param refresh_token Optional refresh token to use (otherwise uses stored token)
+    #' @param force If TRUE, bypass cooldown period
     #' @return logical indicating if refresh was successful
-    refresh_token = function(refresh_token = NULL) {
+    refresh_token = function(refresh_token = NULL, force = FALSE) {
+      # Check cooldown period unless forced
+      current_time <- as.numeric(Sys.time())
+      time_since_refresh <- current_time - private$.last_refresh_time
+      
+      if (!force && time_since_refresh < private$.refresh_cooldown) {
+        log_info(sprintf("Skipping refresh, in cooldown period (%.1f seconds remaining)", 
+                        private$.refresh_cooldown - time_since_refresh))
+        return(TRUE)  # Return true to prevent cascading refresh attempts
+      }
+      
       if (is.null(refresh_token)) {
         if (!file.exists(private$.refresh_token_path)) {
           log_error("No refresh token available")
@@ -86,6 +102,7 @@ TokenManager <- R6::R6Class(
           refresh_token = refresh_token
         )
         private$.save_access_token()  # Only update access token
+        private$.last_refresh_time <- current_time
         log_info("Access token refreshed successfully")
         TRUE
       }, error = function(e) {
@@ -97,7 +114,7 @@ TokenManager <- R6::R6Class(
     #' @description Force update of access token
     #' @return logical indicating if update was successful
     update_access_token = function() {
-      self$refresh_token()
+      self$refresh_token(force = FALSE)  # Use cooldown by default
     },
     
     #' @description Clear all stored tokens
@@ -121,6 +138,8 @@ TokenManager <- R6::R6Class(
     .refresh_token_path = NULL,
     .access_token_path = NULL,
     .token = NULL,
+    .last_refresh_time = NULL,
+    .refresh_cooldown = NULL,
     
     # Load credentials from .secrets
     .load_credentials = function() {
@@ -167,7 +186,7 @@ TokenManager <- R6::R6Class(
         refresh_token <- readRDS(private$.refresh_token_path)
         if (!is.null(refresh_token)) {
           # Use refresh token to get new access token
-          return(self$refresh_token(refresh_token))
+          return(self$refresh_token(refresh_token, force = TRUE))  # Force initial refresh
         }
       }
       
