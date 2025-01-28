@@ -6,6 +6,7 @@ library(httr2)
 library(logger)
 library(data.table)
 library(jsonlite)
+library(RSQLite)   # Adding this as it's used in other parts
 
 source("R/auth.R")
 source("R/market_data.R")
@@ -26,8 +27,8 @@ if (!ts$is_authenticated()) {
 bars <- ts$market_data()$get_bars(
   symbol = "AAPL",
   interval = "1min",
-  start_date = Sys.Date() - 1,
-  end_date = Sys.Date()
+  start_date = as.Date("2024-01-23"),  # Use explicit dates
+  end_date = as.Date("2024-01-26")     # Use a single day in the past
 )
 
 # Display first few bars
